@@ -1,0 +1,19 @@
+.gradle/
+.build/
+local.properties
+**/build/
+dist/
+*.iml
+.idea/
+
+# Regenerable binaries (run tools/dependencies.py and tools/compiler-api.py)
+app/libs/
+app/src/main/jniLibs/
+app/src/main/assets/compiler/
+app/src/main/assets/development-signing.p12
+tests/fixtures/*.zip
+tests/results/
+.build/
+dist/
+*.apk
+*.apks

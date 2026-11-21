@@ -20,7 +20,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Install Android SDK (fully manual + verified)
+      - name: Install Android SDK
         run: |
           set -e
           ANDROID_HOME=$HOME/android-sdk
@@ -37,25 +37,19 @@ jobs:
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
-          echo "=== Verifying Android SDK ==="
-          ls -la $ANDROID_HOME/platforms/android-34/
-          ls -la $ANDROID_HOME/build-tools/34.0.0/
-
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
           echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
-          echo "$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_PATH
 
       - name: Make scripts executable
-        run: |
-          chmod +x tools/*.py || true
+        run: chmod +x tools/*.py || true
 
-      - name: Fetch all runtime JARs and native libraries
+      - name: Fetch JARs
         run: |
           python3 tools/dependencies.py
-          ls -lh app/libs/ | head -15
+          ls app/libs/ | wc -l
 
-      - name: Create development signing keystore
+      - name: Create keystore
         run: |
           mkdir -p app/src/main/assets
           if [ ! -f app/src/main/assets/development-signing.p12 ]; then
@@ -66,41 +60,52 @@ jobs:
               -alias cyberhub-dev \
               -keypass cyberhub-development \
               -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=CyberHub Development, OU=Dev, O=CyberHub, L=City, ST=State, C=US"
+              -dname "CN=CyberHub Development, O=CyberHub, C=US"
           fi
 
-      - name: Build APK (with full error output)
+      - name: Build with forced modern ECJ + full error capture
         run: |
           set -e
           export ANDROID_HOME=$HOME/android-sdk
 
-          echo "=== Starting build.py ==="
-          # Run and capture output so we can see the real ECJ errors
-          python3 tools/build.py --sdk "$ANDROID_HOME" --tools "$ANDROID_HOME/build-tools/34.0.0" 2>&1 | tee build-log.txt
+          # Force a modern ECJ that works with Java 17
+          mkdir -p .build
+          curl -fsSL -o .build/ecj-modern.jar https://repo.maven.apache.org/maven2/org/eclipse/jdt/ecj/3.37.0/ecj-3.37.0.jar
 
-          # If it failed, show the last part of the log
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo ""
-            echo "========== BUILD FAILED - LAST 80 LINES OF LOG =========="
-            tail -80 build-log.txt
-            echo "========================================================"
-            exit 1
-          fi
+          # Patch build.py temporarily to use the modern ECJ and print errors
+          python3 - << 'EOF'
+          from pathlib import Path
+          p = Path("tools/build.py")
+          text = p.read_text()
 
-      - name: Verify and list APK
+          # Force modern ECJ
+          text = text.replace(
+              "ecj=ROOT/'toolchain/ecj.jar'\nif not ecj.exists():\n ecj=B/'ecj.jar'\n if not ecj.exists():urllib.request.urlretrieve('https://repo.maven.apache.org/maven2/org/eclipse/jdt/ecj/3.37.0/ecj-3.37.0.jar',ecj)",
+              "ecj=Path('.build/ecj-modern.jar')"
+          )
+
+          # Make the run function print stderr on failure
+          old_run = '''def run(cmd):\n print('Running',Path(cmd[0]).name,' '.join(str(x) for x in cmd[1:3]),flush=True)\n subprocess.run(list(map(str,cmd)),check=True,cwd=P,env=e)'''
+
+          new_run = '''def run(cmd):\n print('Running',Path(cmd[0]).name,' '.join(str(x) for x in cmd[1:3]),flush=True)\n r=subprocess.run(list(map(str,cmd)),cwd=P,env=e,capture_output=True,text=True)\n if r.returncode != 0:\n  print("=== STDOUT ===")\n  print(r.stdout)\n  print("=== STDERR ===")\n  print(r.stderr)\n  raise subprocess.CalledProcessError(r.returncode, cmd)\n'''
+
+          text = text.replace(old_run, new_run)
+          p.write_text(text)
+          print("Patched build.py to use modern ECJ and show full errors")
+          EOF
+
+          python3 tools/build.py --sdk "$ANDROID_HOME" --tools "$ANDROID_HOME/build-tools/34.0.0"
+
+      - name: Verify APK
         run: |
-          ls -lh dist/ || true
-          find . -name "*.apk" -type f -ls || true
-
           if [ ! -f dist/Cyber-Hub-Manager-0.1.6.apk ]; then
-            echo "ERROR: APK was not produced"
+            echo "APK not found"
+            find . -name "*.apk" -ls || true
             exit 1
           fi
-
-          echo "SUCCESS: APK built"
           ls -lh dist/Cyber-Hub-Manager-0.1.6.apk
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Cyber-Hub-Manager-0.1.6

@@ -27,7 +27,6 @@ jobs:
           mkdir -p $ANDROID_HOME/cmdline-tools
           cd $ANDROID_HOME/cmdline-tools
 
-          # Download official command-line tools
           curl -fsSL -o cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q cmdline-tools.zip
           mv cmdline-tools latest
@@ -35,18 +34,13 @@ jobs:
           export ANDROID_HOME=$HOME/android-sdk
           export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
 
-          # Accept licenses non-interactively
           yes | sdkmanager --licenses > /dev/null || true
-
-          # Install required packages
           sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
-          # Verify installation
           echo "=== Verifying Android SDK ==="
           ls -la $ANDROID_HOME/platforms/android-34/
           ls -la $ANDROID_HOME/build-tools/34.0.0/
 
-          # Export for later steps
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
           echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
@@ -55,13 +49,11 @@ jobs:
       - name: Make scripts executable
         run: |
           chmod +x tools/*.py || true
-          chmod +x gradlew || true
 
       - name: Fetch all runtime JARs and native libraries
         run: |
           python3 tools/dependencies.py
-          echo "=== JARs fetched ==="
-          ls -lh app/libs/ | head -20
+          ls -lh app/libs/ | head -15
 
       - name: Create development signing keystore
         run: |
@@ -76,23 +68,27 @@ jobs:
               -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=CyberHub Development, OU=Dev, O=CyberHub, L=City, ST=State, C=US"
           fi
-          ls -la app/src/main/assets/development-signing.p12
 
-      - name: Build APK with project builder
+      - name: Build APK (with full error output)
         run: |
           set -e
           export ANDROID_HOME=$HOME/android-sdk
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "=== Platform check ==="
-          ls "$ANDROID_HOME/platforms/android-34/android.jar"
-          echo "=== Build-tools check ==="
-          ls "$ANDROID_HOME/build-tools/34.0.0/"
 
-          python3 tools/build.py --sdk "$ANDROID_HOME" --tools "$ANDROID_HOME/build-tools/34.0.0"
+          echo "=== Starting build.py ==="
+          # Run and capture output so we can see the real ECJ errors
+          python3 tools/build.py --sdk "$ANDROID_HOME" --tools "$ANDROID_HOME/build-tools/34.0.0" 2>&1 | tee build-log.txt
+
+          # If it failed, show the last part of the log
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo ""
+            echo "========== BUILD FAILED - LAST 80 LINES OF LOG =========="
+            tail -80 build-log.txt
+            echo "========================================================"
+            exit 1
+          fi
 
       - name: Verify and list APK
         run: |
-          echo "=== Looking for APK ==="
           ls -lh dist/ || true
           find . -name "*.apk" -type f -ls || true
 

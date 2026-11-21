@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -23,10 +23,14 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install platform & build-tools
+      - name: Accept licenses and install packages
         run: |
-          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
-          sdkmanager --licenses || true
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools" || true
+          echo "=== Platforms ==="
+          ls -la $ANDROID_HOME/platforms/ || true
+          echo "=== Build-tools ==="
+          ls -la $ANDROID_HOME/build-tools/ || true
 
       - name: Make scripts executable
         run: |
@@ -53,6 +57,9 @@ jobs:
       - name: Build APK with project builder
         run: |
           export ANDROID_HOME=${ANDROID_HOME:-$ANDROID_SDK_ROOT}
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms/android-34/" || echo "platform missing"
+          ls "$ANDROID_HOME/build-tools/" || echo "build-tools missing"
           python3 tools/build.py --sdk "$ANDROID_HOME" --tools "$ANDROID_HOME/build-tools/34.0.0"
 
       - name: List output
